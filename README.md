@@ -74,7 +74,7 @@ Press **Ctrl+C** to stop following the logs; this does not stop the containers.
 | Native PHP app served by Nginx | http://localhost:8080 | Sample page checks a PDO connection to MySQL. |
 | phpMyAdmin | http://localhost:8081 | Sign in as `hris_app` using `MYSQL_USER`/`MYSQL_PASSWORD` from `.env`; use root only for administration. |
 | Prometheus | http://localhost:9090 | Open **Status → Targets** and confirm the targets are `UP`. |
-| Grafana | http://localhost:3000 | Sign in with `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` from `.env`. |
+| Grafana | http://localhost:3001 | Sign in with `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` from `.env`. |
 
 Grafana's Prometheus data source and a starter **Native PHP Stack Overview** dashboard are provisioned automatically. Open **Dashboards → Local Stack → Native PHP Stack Overview**. You can also use **Explore** and query `up` to inspect scrape-target health.
 
