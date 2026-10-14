@@ -1,0 +1,171 @@
+name: native-php-mysql-stack
+
+services:
+  php:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_DATABASE: ${MYSQL_DATABASE:-hris_db}
+      DB_USERNAME: ${MYSQL_USER:-hris_app}
+      DB_PASSWORD: ${MYSQL_PASSWORD:?Copy .env.example to .env and set MYSQL_PASSWORD}
+      TZ: Asia/Manila
+    volumes:
+      - ./php:/var/www/html
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm -t >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - stack
+
+  nginx:
+    image: nginx:1.28-alpine
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./php:/var/www/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      php:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - stack
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-hris_db}
+      MYSQL_USER: ${MYSQL_USER:-hris_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      MYSQL_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?Set MYSQL_EXPORTER_PASSWORD in .env}
+      TZ: Asia/Manila
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - stack
+
+  phpmyadmin:
+    image: phpmyadmin:5-apache
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: "3306"
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "127.0.0.1:8081:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - stack
+
+  mysql-exporter:
+    image: prom/mysqld-exporter:v0.20.0
+    command:
+      - --mysqld.address=mysql:3306
+      - --mysqld.username=exporter
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?Set MYSQL_EXPORTER_PASSWORD in .env}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - stack
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.5.3
+    command:
+      - --nginx.scrape-uri=http://nginx:8081/stub_status
+    depends_on:
+      nginx:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - stack
+
+  php-fpm-exporter:
+    image: ghcr.io/hipages/php-fpm_exporter:2.2.0
+    command:
+      - server
+      - --web.listen-address=:9253
+    environment:
+      PHP_FPM_SCRAPE_URI: tcp://php:9000/status
+    depends_on:
+      php:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - stack
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - nginx-exporter
+      - php-fpm-exporter
+      - mysql-exporter
+    restart: unless-stopped
+    networks:
+      - stack
+
+  grafana:
+    image: grafana/grafana:13.2.3
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./docker/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - stack
+
+volumes:
+  mysql_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  stack:
+    driver: bridge
